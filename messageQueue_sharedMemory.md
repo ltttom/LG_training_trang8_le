@@ -123,7 +123,7 @@ int main() {
 **Khắc phục**:
 - Dùng blocking hoặc poll/select để chờ.
 
-```
+```cpp
 // mq_empty_eagain.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -174,7 +174,7 @@ int main(){
 - Dùng `mq_getattr` lấy `mq_msgsize`.
 - Chia nhỏ dữ liệu.
 
-```
+```cpp
 // mq_emsgsize.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -218,7 +218,7 @@ int main(){
 **Khắc phục**:
 - Tạo với `O_CREAT` hoặc đảm bảo tiến trình tạo chạy trước.
 
-```
+```cpp
 #include <mqueue.h>
 #include <cstdio>
 
@@ -246,7 +246,7 @@ int main() {
 **Khắc phục**:
 - Mở `O_RDWR` nếu cần vừa send vừa receive.
 
-```
+```cpp
 // mq_ebadf.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -303,7 +303,7 @@ int main(){
   sudo sh -c 'echo 128 > /proc/sys/fs/mqueue/msg_max'
   sudo sh -c 'echo 65536 > /proc/sys/fs/mqueue/msgsize_max'
 
-```
+```cpp
 // Ví dụ minh họa: cố tạo queue với tham số quá lớn so với kernel
 // Tham khảo giới hạn hiện tại qua:
 //   /proc/sys/fs/mqueue/msg_max        (số message tối đa/queue)
@@ -399,7 +399,7 @@ int main() {
 **Khắc phục**:
 - Luôn `ftruncate(fd, size)` trước khi `mmap`.
 
-```
+```cpp
 // demo_shm_ftruncate.cpp
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -445,7 +445,7 @@ int main() {
 **Khắc phục**:
 - Dùng mode đủ (`0644` hoặc `0666` nếu chia sẻ user khác).
 
-```
+```cpp
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -481,7 +481,7 @@ int main(){
 **Khắc phục**:
 - Mở `O_RDWR` nếu cần PROT_WRITE.
 
-```
+```cpp
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -517,7 +517,7 @@ int main(){
 **Khắc phục**:
 - Dùng `pthread_mutex` với `PTHREAD_PROCESS_SHARED` hoặc `sem_*`.
 
-```
+```cpp
 // Minh hoạ race: 2 tiến trình/2 thread ghi/đọc cùng struct không khoá → dữ liệu "rách"
 #include <pthread.h>
 #include <atomic>
@@ -548,7 +548,7 @@ int main(){
 
 #### 2.5 Deadlock do thứ tự khóa sai
 
-```
+```cpp
 /*
 Process A: lock(sem1); lock(sem2); ... unlock(sem2); unlock(sem1);
 Process B: lock(sem2); lock(sem1); ... unlock(sem1); unlock(sem2);
@@ -567,7 +567,7 @@ Khắc phục:
 **Linux xử lý**:
 - Semaphore lưu trong `/dev/shm/sem.<name>`.
 
-```
+```cpp
 // sem_open_examples.cpp
 #include <semaphore.h>
 #include <fcntl.h>
@@ -620,7 +620,7 @@ int main(){
   rm /dev/shm/<tên>
   ```
 
-```
+```cpp
 // cleanup_examples.cpp
 #include <fcntl.h>
 #include <sys/mman.h>
