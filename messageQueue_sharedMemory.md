@@ -107,6 +107,7 @@ int main() {
     mq_close(m); 
     mq_unlink(q);                            // Dọn dẹp queue trong /dev/mqueue
 } 
+```
 
 #### 1.2 `EAGAIN` khi hàng đợi rỗng (non-blocking receive)
 
@@ -122,6 +123,7 @@ int main() {
 **Khắc phục**:
 - Dùng blocking hoặc poll/select để chờ.
 
+```
 // mq_empty_eagain.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -156,7 +158,7 @@ int main(){
   mq_close(w); 
   mq_unlink(q); // Dọn dẹp
 }
-
+```
 #### 1.3 `EMSGSIZE` khi gửi message vượt kích thước
 
 
@@ -172,6 +174,7 @@ int main(){
 - Dùng `mq_getattr` lấy `mq_msgsize`.
 - Chia nhỏ dữ liệu.
 
+```
 // mq_emsgsize.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -200,6 +203,7 @@ int main(){
   mq_close(m); 
   mq_unlink(q);
 }
+```
 
 #### 1.4 `ENOENT` khi mở queue không tồn tại
 
@@ -214,6 +218,7 @@ int main(){
 **Khắc phục**:
 - Tạo với `O_CREAT` hoặc đảm bảo tiến trình tạo chạy trước.
 
+```
 #include <mqueue.h>
 #include <cstdio>
 
@@ -224,6 +229,7 @@ int main() {
     perror("mq_open"); // Kỳ vọng: ENOENT (No such file or directory)
   }
 }
+```
 
 #### 1.5 `EBADF` khi dùng sai mode
 
@@ -240,7 +246,7 @@ int main() {
 **Khắc phục**:
 - Mở `O_RDWR` nếu cần vừa send vừa receive.
 
-
+```
 // mq_ebadf.cpp
 #include <mqueue.h>
 #include <fcntl.h>
@@ -278,6 +284,7 @@ int main(){
   mq_close(w); 
   mq_unlink(q);
 }
+```
 
 #### 1.6 `EINVAL` / `ENOSPC` khi vượt giới hạn hệ thống
 
@@ -296,6 +303,7 @@ int main(){
   sudo sh -c 'echo 128 > /proc/sys/fs/mqueue/msg_max'
   sudo sh -c 'echo 65536 > /proc/sys/fs/mqueue/msgsize_max'
 
+```
 // Ví dụ minh họa: cố tạo queue với tham số quá lớn so với kernel
 // Tham khảo giới hạn hiện tại qua:
 //   /proc/sys/fs/mqueue/msg_max        (số message tối đa/queue)
@@ -326,6 +334,7 @@ int main(){
 sudo sh -c 'echo 128   > /proc/sys/fs/mqueue/msg_max'       # tăng số message tối đa
 sudo sh -c 'echo 65536 > /proc/sys/fs/mqueue/msgsize_max'   # tăng kích cỡ message tối đa
 */
+```
 
 ---
 
@@ -390,6 +399,7 @@ int main() {
 **Khắc phục**:
 - Luôn `ftruncate(fd, size)` trước khi `mmap`.
 
+```
 // demo_shm_ftruncate.cpp
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -420,6 +430,7 @@ int main() {
     close(fd);
     shm_unlink(name);                // Dọn dẹp object trong /dev/shm
 }
+```
 
 #### 2.2 `EACCES` khi mở không đủ quyền
 
@@ -434,6 +445,7 @@ int main() {
 **Khắc phục**:
 - Dùng mode đủ (`0644` hoặc `0666` nếu chia sẻ user khác).
 
+```
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -454,6 +466,7 @@ int main(){
 
   shm_unlink(name);
 }
+```
 
 #### 2.3 `EACCES` khi mmap quyền không khớp
 
@@ -468,6 +481,7 @@ int main(){
 **Khắc phục**:
 - Mở `O_RDWR` nếu cần PROT_WRITE.
 
+```
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -488,6 +502,7 @@ int main(){
   close(fd);
   shm_unlink(name);
 }
+```
 
 #### 2.4 Race condition khi không đồng bộ
 
@@ -502,6 +517,7 @@ int main(){
 **Khắc phục**:
 - Dùng `pthread_mutex` với `PTHREAD_PROCESS_SHARED` hoặc `sem_*`.
 
+```
 // Minh hoạ race: 2 tiến trình/2 thread ghi/đọc cùng struct không khoá → dữ liệu "rách"
 #include <pthread.h>
 #include <atomic>
@@ -528,8 +544,11 @@ int main(){
   (void)s;
   return 0;
 }
+```
 
 #### 2.5 Deadlock do thứ tự khóa sai
+
+```
 /*
 Process A: lock(sem1); lock(sem2); ... unlock(sem2); unlock(sem1);
 Process B: lock(sem2); lock(sem1); ... unlock(sem1); unlock(sem2);
@@ -539,6 +558,7 @@ Khắc phục:
 - Quy ước thứ tự khoá thống nhất (vd: luôn lock sem1 rồi mới lock sem2 ở mọi nơi).
 - Hoặc dùng trylock + backoff/timeouts nếu phù hợp.
 */
+```
 
 #### 2.6 Lỗi `sem_open`
 - `ENOENT`: mở semaphore chưa tồn tại, không O_CREAT.
@@ -547,6 +567,7 @@ Khắc phục:
 **Linux xử lý**:
 - Semaphore lưu trong `/dev/shm/sem.<name>`.
 
+```
 // sem_open_examples.cpp
 #include <semaphore.h>
 #include <fcntl.h>
@@ -580,6 +601,7 @@ int main(){
   sem_unlink(name);                          // /dev/shm/sem.<name>
   return 0;
 }
+```
 
 #### 2.7 Dangling objects
 
@@ -598,6 +620,7 @@ int main(){
   rm /dev/shm/<tên>
   ```
 
+```
 // cleanup_examples.cpp
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -628,7 +651,7 @@ int main(){
   sem_unlink(sem_name);   // Xoá semaphore có tên
   return 0;
 }
-
+```
 
 # So sánh Shared Memory và Message Queue
 |Tiêu chí |Shared Memory | Message Queue|
