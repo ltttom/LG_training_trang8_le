@@ -82,19 +82,31 @@ int main() {
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+
 int main() {
-    const char* q = "/demo_mq_eagain";
-    mq_attr a{}; a.mq_maxmsg = 2; a.mq_msgsize = 32; a.mq_flags = O_NONBLOCK;
+    const char* q = "/demo_mq_eagain";       // Tên queue POSIX phải bắt đầu bằng '/'
+    mq_attr a{}; 
+    a.mq_maxmsg = 2;                         // Giới hạn tối đa số message trong queue (rất nhỏ để dễ tái hiện)
+    a.mq_msgsize = 32;                       // Kích thước tối đa mỗi message (byte)
+    a.mq_flags = O_NONBLOCK;                 // Đặt cờ non-block cho *mô tả* queue khi tạo (không bắt buộc)
+
+    // Mở queue để *ghi* và *non-blocking*. Nếu chưa tồn tại thì tạo (O_CREAT).
     mqd_t m = mq_open(q, O_CREAT | O_WRONLY | O_NONBLOCK, 0644, &a);
-    char buf[32] = "x";
-    mq_send(m, buf, sizeof(buf), 0);
-    mq_send(m, buf, sizeof(buf), 0);
-    if (mq_send(m, buf, sizeof(buf), 0)==-1) {
-        printf("mq_send lỗi: %s\n", strerror(errno));
+    if (m == (mqd_t)-1) { perror("mq_open"); return 1; }
+
+    char buf[32] = "x";                      // Payload nhỏ hơn mq_msgsize
+
+    mq_send(m, buf, sizeof(buf), 0);         // 1) Gửi OK
+    mq_send(m, buf, sizeof(buf), 0);         // 2) Gửi OK → queue đạt mq_maxmsg (đầy)
+
+    // 3) Gửi *thêm* trong chế độ non-block → không chờ → trả -1 với errno=EAGAIN
+    if (mq_send(m, buf, sizeof(buf), 0) == -1) {
+        printf("mq_send lỗi (khi đầy): %s\n", strerror(errno)); // Kỳ vọng: EAGAIN
     }
-    mq_close(m); mq_unlink(q);
-}
-```
+
+    mq_close(m); 
+    mq_unlink(q);                            // Dọn dẹp queue trong /dev/mqueue
+} 
 
 #### 1.2 `EAGAIN` khi hàng đợi rỗng (non-blocking receive)
 
@@ -110,25 +122,40 @@ int main() {
 **Khắc phục**:
 - Dùng blocking hoặc poll/select để chờ.
 
-```cpp
 // mq_empty_eagain.cpp
 #include <mqueue.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
+
 int main(){
-  const char* q="/demo_mq_empty";
-  mq_attr a{}; a.mq_maxmsg=2; a.mq_msgsize=32;
-  mqd_t w = mq_open(q, O_CREAT|O_WRONLY, 0644, &a);
-  mqd_t r = mq_open(q, O_RDONLY|O_NONBLOCK);
-  char buf[32]; unsigned prio=0;
-  if (mq_receive(r, buf, sizeof(buf), &prio)==-1){
-    printf("mq_receive lỗi: %s\n", strerror(errno));
+  const char* q = "/demo_mq_empty";
+
+  mq_attr a{}; 
+  a.mq_maxmsg = 2; 
+  a.mq_msgsize = 32;
+
+  // Tạo queue trước (writer mở để giữ queue tồn tại)
+  mqd_t w = mq_open(q, O_CREAT | O_WRONLY, 0644, &a);
+  if (w == (mqd_t)-1) { perror("mq_open writer"); return 1; }
+
+  // Mở *reader* ở chế độ non-block
+  mqd_t r = mq_open(q, O_RDONLY | O_NONBLOCK);
+  if (r == (mqd_t)-1) { perror("mq_open reader"); return 1; }
+
+  char buf[32]; 
+  unsigned prio = 0;
+
+  // Queue đang *trống* và receive non-block → trả -1, errno=EAGAIN
+  if (mq_receive(r, buf, sizeof(buf), &prio) == -1){
+    printf("mq_receive lỗi (khi rỗng): %s\n", strerror(errno)); // Kỳ vọng: EAGAIN
   }
-  mq_close(r); mq_close(w); mq_unlink(q);
+
+  mq_close(r); 
+  mq_close(w); 
+  mq_unlink(q); // Dọn dẹp
 }
-```
 
 #### 1.3 `EMSGSIZE` khi gửi message vượt kích thước
 
@@ -145,24 +172,34 @@ int main(){
 - Dùng `mq_getattr` lấy `mq_msgsize`.
 - Chia nhỏ dữ liệu.
 
-```cpp
 // mq_emsgsize.cpp
 #include <mqueue.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+
 int main(){
-  const char* q="/demo_mq_sz";
-  mq_attr a{}; a.mq_maxmsg=4; a.mq_msgsize=16;
-  mqd_t m = mq_open(q, O_CREAT|O_WRONLY, 0644, &a);
-  char big[64]; memset(big,'A',sizeof(big));
-  if (mq_send(m, big, sizeof(big), 0)==-1){
-    printf("mq_send lỗi: %s\n", strerror(errno));
+  const char* q = "/demo_mq_sz";
+
+  mq_attr a{}; 
+  a.mq_maxmsg  = 4;     // OK
+  a.mq_msgsize = 16;    // Hạn 16 byte/mỗi message
+
+  mqd_t m = mq_open(q, O_CREAT | O_WRONLY, 0644, &a);
+  if (m == (mqd_t)-1) { perror("mq_open"); return 1; }
+
+  char big[64]; 
+  memset(big, 'A', sizeof(big));             // Chuẩn bị payload 64 byte (> 16)
+
+  // Gửi vượt kích thước → trả -1 với errno=EMSGSIZE
+  if (mq_send(m, big, sizeof(big), 0) == -1){
+    printf("mq_send lỗi (vượt mq_msgsize): %s\n", strerror(errno)); // Kỳ vọng: EMSGSIZE
   }
-  mq_close(m); mq_unlink(q);
+
+  mq_close(m); 
+  mq_unlink(q);
 }
-```
 
 #### 1.4 `ENOENT` khi mở queue không tồn tại
 
@@ -177,10 +214,16 @@ int main(){
 **Khắc phục**:
 - Tạo với `O_CREAT` hoặc đảm bảo tiến trình tạo chạy trước.
 
-```cpp
-mqd_t m = mq_open("/khong_ton_tai", O_RDONLY);
-if (m==(mqd_t)-1) { perror("mq_open"); }
-```
+#include <mqueue.h>
+#include <cstdio>
+
+int main() {
+  // Không dùng O_CREAT → nếu queue chưa tồn tại trong /dev/mqueue → ENOENT
+  mqd_t m = mq_open("/khong_ton_tai", O_RDONLY);
+  if (m == (mqd_t)-1) { 
+    perror("mq_open"); // Kỳ vọng: ENOENT (No such file or directory)
+  }
+}
 
 #### 1.5 `EBADF` khi dùng sai mode
 
@@ -198,26 +241,43 @@ if (m==(mqd_t)-1) { perror("mq_open"); }
 - Mở `O_RDWR` nếu cần vừa send vừa receive.
 
 
-```cpp
 // mq_ebadf.cpp
 #include <mqueue.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
+
 int main(){
-  const char* q="/demo_mq_badf";
-  mq_attr a{}; a.mq_maxmsg=2; a.mq_msgsize=8;
-  mqd_t w = mq_open(q, O_CREAT|O_WRONLY, 0600, &a);
+  const char* q = "/demo_mq_badf";
+
+  mq_attr a{}; 
+  a.mq_maxmsg = 2; 
+  a.mq_msgsize = 8;
+
+  // Writer: chỉ mở WRONLY
+  mqd_t w = mq_open(q, O_CREAT | O_WRONLY, 0600, &a);
+  if (w == (mqd_t)-1) { perror("mq_open w"); return 1; }
+
+  // Reader: chỉ mở RDONLY
   mqd_t r = mq_open(q, O_RDONLY);
-  char msg[8]="hi"; unsigned pr=0;
-  if (mq_receive(w, msg, sizeof(msg), &pr)==-1)
-    printf("mq_receive WRONLY: %s\n", strerror(errno));
-  if (mq_send(r, msg, sizeof(msg), 0)==-1)
-    printf("mq_send RDONLY: %s\n", strerror(errno));
-  mq_close(r); mq_close(w); mq_unlink(q);
+  if (r == (mqd_t)-1) { perror("mq_open r"); return 1; }
+
+  char msg[8] = "hi"; 
+  unsigned pr = 0;
+
+  // Dùng descriptor WRONLY để *nhận* → sai chế độ → EBADF
+  if (mq_receive(w, msg, sizeof(msg), &pr) == -1)
+    printf("mq_receive WRONLY: %s\n", strerror(errno)); // Kỳ vọng: EBADF
+
+  // Dùng descriptor RDONLY để *gửi* → sai chế độ → EBADF
+  if (mq_send(r, msg, sizeof(msg), 0) == -1)
+    printf("mq_send RDONLY: %s\n", strerror(errno)); // Kỳ vọng: EBADF
+
+  mq_close(r); 
+  mq_close(w); 
+  mq_unlink(q);
 }
-```
 
 #### 1.6 `EINVAL` / `ENOSPC` khi vượt giới hạn hệ thống
 
@@ -236,11 +296,36 @@ int main(){
   sudo sh -c 'echo 128 > /proc/sys/fs/mqueue/msg_max'
   sudo sh -c 'echo 65536 > /proc/sys/fs/mqueue/msgsize_max'
 
-```cpp
-mq_attr a{}; a.mq_maxmsg=1000000; a.mq_msgsize=1024*1024;
-mqd_t m = mq_open("/demo_mq_big", O_CREAT|O_WRONLY, 0644, &a);
-if (m==(mqd_t)-1) perror("mq_open");
-```
+// Ví dụ minh họa: cố tạo queue với tham số quá lớn so với kernel
+// Tham khảo giới hạn hiện tại qua:
+//   /proc/sys/fs/mqueue/msg_max        (số message tối đa/queue)
+//   /proc/sys/fs/mqueue/msgsize_max    (kích thước message tối đa)
+
+#include <mqueue.h>
+#include <fcntl.h>
+#include <cstdio>
+#include <cerrno>
+
+int main(){
+  mq_attr a{}; 
+  a.mq_maxmsg  = 1'000'000;             // Quá lớn → có thể EINVAL/ENOSPC
+  a.mq_msgsize = 1024 * 1024;           // 1 MiB, có thể vượt msgsize_max
+
+  mqd_t m = mq_open("/demo_mq_big", O_CREAT | O_WRONLY, 0644, &a);
+  if (m == (mqd_t)-1) {
+    perror("mq_open");                  // Kỳ vọng: EINVAL (tham số sai) hoặc ENOSPC (không cấp phát được)
+    return 1;
+  }
+  mq_close(m); 
+  mq_unlink("/demo_mq_big");
+  return 0;
+}
+
+/*
+# Cách khắc phục (tạm thời, cần quyền root):
+sudo sh -c 'echo 128   > /proc/sys/fs/mqueue/msg_max'       # tăng số message tối đa
+sudo sh -c 'echo 65536 > /proc/sys/fs/mqueue/msgsize_max'   # tăng kích cỡ message tối đa
+*/
 
 ---
 
@@ -305,11 +390,36 @@ int main() {
 **Khắc phục**:
 - Luôn `ftruncate(fd, size)` trước khi `mmap`.
 
-```cpp
-int fd = shm_open("/demo_shm_nf", O_CREAT|O_RDWR, 0644);
-// Sai: thiếu ftruncate
-ftruncate(fd, 4096); // Sửa
-```
+// demo_shm_ftruncate.cpp
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cstdio>
+#include <cstring>
+#include <cerrno>
+
+int main() {
+    const char* name = "/demo_shm_nf";
+
+    // Tạo SHM object (file ảo trong /dev/shm)
+    int fd = shm_open(name, O_CREAT | O_RDWR, 0644);
+    if (fd == -1) { perror("shm_open"); return 1; }
+
+    // SAI: nếu không ftruncate để cấp kích thước trước khi mmap,
+    // việc ghi vào vùng map có thể gây SIGBUS (do backing size = 0).
+    // ĐÚNG: luôn ftruncate trước.
+    if (ftruncate(fd, 4096) == -1) { perror("ftruncate"); return 1; }
+
+    void* p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) { perror("mmap"); return 1; }
+
+    strcpy((char*)p, "Hello SHM");  // An toàn sau khi đã ftruncate
+
+    munmap(p, 4096);
+    close(fd);
+    shm_unlink(name);                // Dọn dẹp object trong /dev/shm
+}
 
 #### 2.2 `EACCES` khi mở không đủ quyền
 
@@ -324,10 +434,26 @@ ftruncate(fd, 4096); // Sửa
 **Khắc phục**:
 - Dùng mode đủ (`0644` hoặc `0666` nếu chia sẻ user khác).
 
-```cpp
-int fd = shm_open("/demo_shm_ro", O_CREAT|O_RDONLY, 0400);
-int fdw = shm_open("/demo_shm_ro", O_RDWR, 0); // EACCES
-```
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cstdio>
+
+int main(){
+  const char* name = "/demo_shm_ro";
+
+  // Tạo với quyền *chỉ đọc* (0400) rồi thử mở O_RDWR → EACCES
+  int fd_rocreate = shm_open(name, O_CREAT | O_RDONLY, 0400);
+  if (fd_rocreate == -1) { perror("shm_open create ro"); return 1; }
+  close(fd_rocreate);
+
+  // Mở lại với O_RDWR nhưng mode trước đây không cho ghi → EACCES
+  int fd = shm_open(name, O_RDWR, 0);
+  if (fd == -1) { perror("shm_open O_RDWR"); } // Kỳ vọng: EACCES
+
+  shm_unlink(name);
+}
 
 #### 2.3 `EACCES` khi mmap quyền không khớp
 
@@ -342,10 +468,26 @@ int fdw = shm_open("/demo_shm_ro", O_RDWR, 0); // EACCES
 **Khắc phục**:
 - Mở `O_RDWR` nếu cần PROT_WRITE.
 
-```cpp
-int fd = shm_open("/demo_shm_map", O_CREAT|O_RDONLY, 0644);
-void* p = mmap(nullptr, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0); // EACCES
-```
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cstdio>
+
+int main(){
+  const char* name = "/demo_shm_map";
+
+  // Mở RDONLY
+  int fd = shm_open(name, O_CREAT | O_RDONLY, 0644);
+  if (fd == -1) { perror("shm_open"); return 1; }
+
+  // Cố mmap với PROT_WRITE trong khi fd là RDONLY → EACCES
+  void* p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (p == MAP_FAILED) { perror("mmap"); } // Kỳ vọng: EACCES
+
+  close(fd);
+  shm_unlink(name);
+}
 
 #### 2.4 Race condition khi không đồng bộ
 
@@ -360,28 +502,43 @@ void* p = mmap(nullptr, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0); // EACCE
 **Khắc phục**:
 - Dùng `pthread_mutex` với `PTHREAD_PROCESS_SHARED` hoặc `sem_*`.
 
-```cpp
-struct Shared { int len; char buf[256]; };
-// Writer và Reader cùng truy cập mà không khóa → dữ liệu rách
-```
+// Minh hoạ race: 2 tiến trình/2 thread ghi/đọc cùng struct không khoá → dữ liệu "rách"
+#include <pthread.h>
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+
+struct Shared { 
+  int len; 
+  char buf[256]; 
+};
+
+int main(){
+  // Ví dụ *ý tưởng* (không đầy đủ shared memory setup để ngắn gọn):
+  Shared s{};                     // Giả sử s nằm trong vùng SHM đã map chung
+
+  // Thread A (writer) - KHÔNG khoá:
+  // s.len = 256; memcpy(s.buf, big_data, 256);
+  // Trong lúc copy, Thread B (reader) đọc s.len & s.buf → có thể thấy len mới nhưng buf còn dở
+
+  // Cách khắc phục: dùng mutex/semaphore liên tiến trình:
+  // - pthread_mutex với thuộc tính PTHREAD_PROCESS_SHARED
+  // - hoặc sem_* (sem_open, sem_wait, sem_post)
+  // (Xem ví dụ khoá thực sự ở phần 2.5)
+  (void)s;
+  return 0;
+}
 
 #### 2.5 Deadlock do thứ tự khóa sai
+/*
+Process A: lock(sem1); lock(sem2); ... unlock(sem2); unlock(sem1);
+Process B: lock(sem2); lock(sem1); ... unlock(sem1); unlock(sem2);
+→ Mắc kẹt vĩnh viễn nếu cả hai giữ một sem và chờ cái còn lại.
 
-**Tình huống**: Hai tiến trình khóa resource theo thứ tự khác nhau.
-
-**Linux xử lý**:
-- Không timeout (với semaphore thường), treo vĩnh viễn.
-
-**Nguyên nhân**:
-- Không quy ước thứ tự khóa.
-
-**Khắc phục**:
-- Luôn khóa theo thứ tự cố định.
-
-```
-// Process A: lock(sem1); lock(sem2);
-// Process B: lock(sem2); lock(sem1);
-```
+Khắc phục:
+- Quy ước thứ tự khoá thống nhất (vd: luôn lock sem1 rồi mới lock sem2 ở mọi nơi).
+- Hoặc dùng trylock + backoff/timeouts nếu phù hợp.
+*/
 
 #### 2.6 Lỗi `sem_open`
 - `ENOENT`: mở semaphore chưa tồn tại, không O_CREAT.
@@ -389,6 +546,40 @@ struct Shared { int len; char buf[256]; };
 
 **Linux xử lý**:
 - Semaphore lưu trong `/dev/shm/sem.<name>`.
+
+// sem_open_examples.cpp
+#include <semaphore.h>
+#include <fcntl.h>
+#include <cstdio>
+#include <cerrno>
+#include <cstring>
+#include <unistd.h>
+
+int main(){
+  const char* name = "/demo_sem";
+
+  // ENOENT: Mở semaphore chưa tồn tại và KHÔNG O_CREAT
+  errno = 0;
+  sem_t* s1 = sem_open(name, 0);            // Không O_CREAT
+  if (s1 == SEM_FAILED) {
+    printf("sem_open ENOENT: %s\n", strerror(errno)); // Kỳ vọng: ENOENT
+  }
+
+  // Tạo semaphore với O_CREAT
+  sem_t* s2 = sem_open(name, O_CREAT, 0644, 1);
+  if (s2 == SEM_FAILED) { perror("sem_open create"); return 1; }
+
+  // EEXIST: Tạo lại với O_CREAT|O_EXCL khi đã tồn tại
+  errno = 0;
+  sem_t* s3 = sem_open(name, O_CREAT | O_EXCL, 0644, 1);
+  if (s3 == SEM_FAILED) {
+    printf("sem_open EEXIST: %s\n", strerror(errno)); // Kỳ vọng: EEXIST
+  }
+
+  sem_close(s2);
+  sem_unlink(name);                          // /dev/shm/sem.<name>
+  return 0;
+}
 
 #### 2.7 Dangling objects
 
@@ -406,6 +597,38 @@ struct Shared { int len; char buf[256]; };
   ```bash
   rm /dev/shm/<tên>
   ```
+
+// cleanup_examples.cpp
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <cstdio>
+
+int main(){
+  // SHM
+  const char* shm_name = "/demo_leak";
+  int fd = shm_open(shm_name, O_CREAT | O_RDWR, 0644);
+  ftruncate(fd, 4096);
+  void* p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+  // SEM
+  const char* sem_name = "/demo_sem_leak";
+  sem_t* s = sem_open(sem_name, O_CREAT, 0644, 1);
+
+  // ... dùng p và s ...
+
+  // QUÊN shm_unlink / sem_unlink → object vẫn còn trong /dev/shm
+  // Khắc phục: unlink khi tiến trình cuối cùng kết thúc
+  munmap(p, 4096);
+  close(fd);
+  shm_unlink(shm_name);   // Xoá lối vào tên (object sẽ biến mất khi không còn tiến trình giữ)
+  sem_close(s);
+  sem_unlink(sem_name);   // Xoá semaphore có tên
+  return 0;
+}
+
 
 # So sánh Shared Memory và Message Queue
 |Tiêu chí |Shared Memory | Message Queue|
